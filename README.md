@@ -116,6 +116,9 @@ python main.py
 
   - **黑名单优先**；白名单非空时，只有命中白名单的 IP 才放行
   - 对 **HTTP 与 WebDAV 统一生效**
+  - **规则以数据库为准**：首次启动会把 config.json 里的规则导入数据库，
+    之后改规则请走管理界面（直接写库）。改 config.json 的 `access` 段
+    在库中已有记录时不再生效（避免两处不一致）。
 - `access.trust_proxy_headers`：是否信任代理头（默认 `true`）
   - 依次读取 `CF-Connecting-IP` → `True-Client-IP` → `X-Real-IP` → `X-Client-IP` → `X-Forwarded-For` → `Forwarded`
   - 能正确处理 `1.2.3.4:5678`、`[::1]:80`、`client, proxy1` 等写法
@@ -135,13 +138,13 @@ python main.py
 访问 `http://<IP>/view/admin`，用拥有 **写权限（`rw`）** 的账号登录。
 
 - **用户管理**：新增 / 修改 / 删除用户，设置权限（`r` / `rw`），口令存入 SQLite 时自动 scrypt 散列
-- **IP 访问控制**：启用开关、白名单、黑名单、是否信任代理头
+- **IP 访问控制**：启用开关、白名单、黑名单、是否信任代理头，规则写入 SQLite
 
-保存后**立即生效，无需重启**（用户改动直接落库；IP 规则热重载）。
+保存后**立即生效，无需重启**（用户与 IP 规则都直接落库，控制器热重载）。
 
 > 管理页面与 API（`/view/admin`、`/api/admin/*`）**不受 IP 黑白名单限制**，
 > 且需管理员账号鉴权——避免规则配错后把自己锁在门外。
-> IP 规则会写回 `config.json`；用户**只存 SQLite**，不再写入配置文件。
+> 用户与 IP 规则**都只存 SQLite**，不再写入配置文件。
 
 ---
 
@@ -164,7 +167,7 @@ app/
   __main__.py                # CLI 与启动引导（建库、建目录、起服务）
   config.py                  # 配置加载、路径安全解析
   server.py                  # 单端口统一服务（HTTP + WebDAV 合并）
-  models.py                  # SQLAlchemy 模型与用户库操作
+  models.py                  # SQLAlchemy 模型（用户 + IP 规则）与建库逻辑
   users_db.py                # scrypt 散列与校验
   auth.py                    # 共用认证逻辑
   realip.py                  # 真实 IP 解析（CF / 代理）

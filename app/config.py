@@ -227,6 +227,32 @@ class AppConfig:
         )
 
 
+def apply_access_from_db(cfg: AppConfig) -> AppConfig:
+    """用数据库里的 IP 规则覆盖配置（数据库未接管时保持 config.json 的值）。
+
+    需在 Flask 应用上下文中调用；不在上下文中或未建库时静默跳过。
+    """
+    try:
+        from .models import load_access_config
+
+        saved = load_access_config()
+    except Exception:  # noqa: BLE001  未初始化/未建表/无应用上下文
+        return cfg
+    if saved is None:
+        return cfg
+    cfg.access_enabled = bool(saved.get("enabled", False))
+    cfg.access_whitelist = list(saved.get("whitelist") or [])
+    cfg.access_blacklist = list(saved.get("blacklist") or [])
+    cfg.trust_proxy_headers = bool(saved.get("trust_proxy_headers", True))
+    # 同步到 raw，避免回写时用陈旧值覆盖
+    raw_access = cfg.raw.setdefault("access", {})
+    raw_access["enabled"] = cfg.access_enabled
+    raw_access["whitelist"] = list(cfg.access_whitelist)
+    raw_access["blacklist"] = list(cfg.access_blacklist)
+    raw_access["trust_proxy_headers"] = cfg.trust_proxy_headers
+    return cfg
+
+
 def _env_overrides(cfg: AppConfig) -> AppConfig:
     """允许用环境变量覆盖关键项（容器/CI 友好）。"""
     env = os.environ

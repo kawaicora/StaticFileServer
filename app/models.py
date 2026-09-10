@@ -83,6 +83,42 @@ class User(db.Model):  # type: ignore[name-defined]
         return f"<User {self.username} {self.permissions}>"
 
 
+class AccessRule(db.Model):  # type: ignore[name-defined]
+    """IP 访问规则（黑/白名单）表。
+
+    规则改存数据库，与 config.json 解耦；
+    支持热重载，改完立即生效。
+    """
+
+    __tablename__ = "access_rules"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    list_type = db.Column(db.String(8), nullable=False, index=True)  # whitelist / blacklist
+    pattern = db.Column(db.String(128), nullable=False)
+    note = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "list_type": self.list_type,
+            "pattern": self.pattern,
+            "note": self.note or "",
+        }
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<AccessRule {self.list_type} {self.pattern}>"
+
+
+class AccessSetting(db.Model):  # type: ignore[name-defined]
+    """IP 访问控制的开关项（单行键值表）。"""
+
+    __tablename__ = "access_settings"
+
+    key = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
+
+
 def normalize_db_url(url: str, base_dir: str = "") -> str:
     """把相对 sqlite 路径锚定到基准目录，避免受工作目录影响。
 
@@ -182,3 +218,74 @@ def delete_user(username: str) -> bool:
 
 def count_users() -> int:
     return int(db.session.query(User.id).count())
+
+
+# ---------- IP 访问规则 ----------
+
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def load_access_config() -> dict:
+    """从数据库读取 IP 访问控制配置，返回与旧 config 同形的字典。
+
+    库中尚无记录时返回 None，表示“未接管”，由调用方回退到 config.json。
+    """
+    rows = db.session.query(AccessRule).order_by(AccessRule.id).all()
+    settings = {s.key: s.value for s in db.session.query(AccessSetting).all()}
+    if not rows and not settings:
+        return None
+    whitelist = [r.pattern for r in rows if r.list_type == "whitelist"]
+    blacklist = [r.pattern for r in rows if r.list_type == "blacklist"]
+    return {
+        "enabled": settings.get("enabled", "false").lower() in _TRUE,
+        "whitelist": whitelist,
+        "blacklist": blacklist,
+        "trust_proxy_headers": settings.get("trust_proxy_headers", "true").lower() in _TRUE,
+    }
+
+
+def save_access_config(
+    enabled: bool,
+    whitelist: list[str],
+    blacklist: list[str],
+    trust_proxy_headers: bool = True,
+) -> None:
+    """全量替换 IP 访问规则与开关（幂等）。"""
+    db.session.query(AccessRule).delete()
+    for pattern in whitelist:
+        db.session.add(AccessRule(list_type="whitelist", pattern=pattern))
+    for pattern in blacklist:
+        db.session.add(AccessRule(list_type="blacklist", pattern=pattern))
+    for key, value in (
+        ("enabled", "true" if enabled else "false"),
+        ("trust_proxy_headers", "true" if trust_proxy_headers else "false"),
+    ):
+        row = db.session.get(AccessSetting, key)
+        if row is None:
+            db.session.add(AccessSetting(key=key, value=value))
+        else:
+            row.value = value
+    db.session.commit()
+    log.info(
+        "IP 规则已写入数据库：启用=%s 白名单=%d 黑名单=%d",
+        enabled,
+        len(whitelist),
+        len(blacklist),
+    )
+
+
+def seed_access_config_from(seed: dict) -> bool:
+    """首次启动时把 config.json 里的 IP 规则导入数据库。
+
+    已有记录则不覆盖，返回 False。
+    """
+    if load_access_config() is not None:
+        return False
+    save_access_config(
+        enabled=bool(seed.get("enabled", False)),
+        whitelist=[str(x) for x in (seed.get("whitelist") or [])],
+        blacklist=[str(x) for x in (seed.get("blacklist") or [])],
+        trust_proxy_headers=bool(seed.get("trust_proxy_headers", True)),
+    )
+    log.info("已把 config.json 中的 IP 规则导入数据库")
+    return True

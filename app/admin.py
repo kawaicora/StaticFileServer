@@ -17,7 +17,6 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from .access import AccessController
 from .auth import Authenticator
-from .config import save_config
 from .iprules import validate_entries
 from .logging_setup import get_logger
 
@@ -45,18 +44,17 @@ def register_admin(app: Flask, controller: AccessController) -> None:
             return _unauthorized(controller.config.realm)
         return None
 
-    def _persist_access() -> str:
-        """把 IP 黑白名单写回磁盘（用户已存 SQLite，不写 config.json）。"""
+    def _persist_access() -> None:
+        """把 IP 黑白名单与开关写入数据库（不再写 config.json）。"""
+        from .models import save_access_config
+
         cfg = controller.config
-        data = dict(cfg.raw)
-        data["access"] = {
-            "enabled": cfg.access_enabled,
-            "whitelist": list(cfg.access_whitelist),
-            "blacklist": list(cfg.access_blacklist),
-            "trust_proxy_headers": cfg.trust_proxy_headers,
-        }
-        # 用户口令不再写入 config.json（改存 SQLite 散列）
-        return save_config(cfg.config_path, data)
+        save_access_config(
+            enabled=cfg.access_enabled,
+            whitelist=list(cfg.access_whitelist),
+            blacklist=list(cfg.access_blacklist),
+            trust_proxy_headers=cfg.trust_proxy_headers,
+        )
 
     # ---------- 页面 ----------
 
@@ -153,13 +151,14 @@ def register_admin(app: Flask, controller: AccessController) -> None:
             return jsonify({"ok": False, "error": "规则格式错误：" + "；".join(errors)}), 400
 
         cfg = controller.config
+        cfg.raw.setdefault("access", {})
         cfg.access_enabled = enabled
         cfg.access_whitelist = whitelist
         cfg.access_blacklist = blacklist
         cfg.trust_proxy_headers = trust
         _persist_access()
         controller.reload(cfg)
-        log.info("访问规则已保存: 启用=%s 白%d 黑%d", enabled, len(whitelist), len(blacklist))
+        log.info("访问规则已保存到数据库: 启用=%s 白%d 黑%d", enabled, len(whitelist), len(blacklist))
         return jsonify({"ok": True})
 
     @app.route("/api/admin/reload", methods=["POST"])

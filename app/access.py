@@ -44,13 +44,20 @@ class AccessController:
         return self.config.access_enabled
 
     def reload(self, config: AppConfig | None = None) -> AppConfig:
-        """重新载入配置（默认从磁盘读）。返回新配置。"""
+        """重新载入配置。
+
+        未传 config 时从磁盘读，并在可用时用数据库里的 IP 规则覆盖；
+        传了 config 则直接用（管理界面保存后的即时生效路径）。
+        """
         with self._lock:
-            new_config = (
-                config
-                if config is not None
-                else load_config(self._config.config_path or None)
-            )
+            if config is not None:
+                new_config = config
+            else:
+                from .config import apply_access_from_db
+
+                new_config = load_config(self._config.config_path or None)
+                # IP 规则以数据库为准；不在应用上下文/未建库时保持原值
+                apply_access_from_db(new_config)
             self._config = new_config
             self._load_matchers(new_config)
         log.info(

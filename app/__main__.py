@@ -20,6 +20,7 @@ from . import __version__
 from .access import init_controller
 from .config import (
     DEFAULT_CONFIG_NAME,
+    apply_access_from_db,
     ensure_config_file,
     ensure_root_dir,
     get_base_dir,
@@ -91,15 +92,6 @@ def main(argv: list[str] | None = None) -> int:
     log.info("StaticFileServer %s 启动，配置文件=%s", __version__, config.config_path or "(默认)")
     log.info("服务根目录: %s", config.root)
 
-    # 初始化全局准入控制器（两协议共享，支持管理界面热重载）
-    init_controller(config)
-    log.info(
-        "IP 访问控制: %s（白名单 %d 条 / 黑名单 %d 条）",
-        "已启用" if config.access_enabled else "未启用",
-        len(config.access_whitelist),
-        len(config.access_blacklist),
-    )
-
     # ---------- 数据库初始化（Flask-SQLAlchemy） ----------
     app = create_application(config)
     try:
@@ -108,6 +100,30 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001
         log.error("数据库初始化失败，无法继续: %s", e)
         return 1
+
+    # IP 规则以数据库为准：库中无记录时把 config.json 的规则导入库，
+    # 然后用库中的值覆盖配置，保证两端一致。
+    with app.app_context():
+        from .models import seed_access_config_from
+
+        seed_access_config_from(
+            {
+                "enabled": config.access_enabled,
+                "whitelist": config.access_whitelist,
+                "blacklist": config.access_blacklist,
+                "trust_proxy_headers": config.trust_proxy_headers,
+            }
+        )
+        apply_access_from_db(config)
+
+    # 初始化全局准入控制器（两协议共享，支持管理界面热重载）
+    init_controller(config)
+    log.info(
+        "IP 访问控制: %s（白名单 %d 条 / 黑名单 %d 条，规则存于数据库）",
+        "已启用" if config.access_enabled else "未启用",
+        len(config.access_whitelist),
+        len(config.access_blacklist),
+    )
 
     stop_event = threading.Event()
 

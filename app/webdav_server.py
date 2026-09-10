@@ -5,8 +5,9 @@
 - 必须认证（anonymous_readonly=False）：未认证一律 401
 - 由 app/server.py 挂在单端口的 `webdav.mount` 前缀下（默认 /dav）
 
-注意：挂载前缀的剥离已由 DispatcherMiddleware 完成，
-所以 wsgidav 内部看到的路径始终是 "/"，provider/realm 都用 "/"。
+/provider_mapping 的 "/" 指向配置里的 root（即 HTTP 浏览的同一个目录），
+而不是字面量的 ./dav 目录。
+挂载前缀由 MountMiddleware 剥离，wsgidav 内部始终按根 "/" 处理。
 """
 
 from __future__ import annotations
@@ -234,34 +235,23 @@ class MountMiddleware:
             return [b""]
 
         if path.startswith(self.mount + "/"):
+            # 剥离挂载前缀：PATH_INFO 去前缀，SCRIPT_NAME 置为前缀。
+            # Destination 头不在此处处理：wsgidav 会按 provider 的
+            # mount_path 自行剥前缀（见 request_server.py），
+            # 我们提前剥反而会被当成跨 realm 而报 502。
+            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + self.mount
             environ["PATH_INFO"] = path[len(self.mount):]
-            self._strip_destination(environ)
             return self.dav_app(environ, start_response)
 
         # 非挂载路径交给 Flask
         return self.fallback(environ, start_response)
 
     def _strip_destination(self, environ) -> None:
-        """把 Destination 头里的挂载前缀去掉，适配已剥离前缀的 wsgidav。
+        """已废弃：挂载前缀由 wsgidav 的 provider.mount_path 处理。
 
-        既支持完整 URL（http://host/dav/a.txt），也支持绝对路径（/dav/a.txt）。
+        保留空实现以避免外部引用报错；不再修改 Destination 头。
         """
-        dest = environ.get("HTTP_DESTINATION")
-        if not dest:
-            return
-        prefix = self.mount + "/"
-        if dest.startswith(prefix):
-            environ["HTTP_DESTINATION"] = dest[len(self.mount):]
-            return
-        # 完整 URL 形式：在 scheme://host 之后寻找 /dav/
-        for sep in ("://",):
-            if sep in dest:
-                head, _, tail = dest.partition(sep)
-                host, _, path = tail.partition("/")
-                full = "/" + path
-                if full.startswith(prefix):
-                    environ["HTTP_DESTINATION"] = head + sep + host + full[len(self.mount):]
-                return
+        return
 
 
 def _make_domain_controller_class(anonymous_readonly: bool):
@@ -277,13 +267,21 @@ def _make_domain_controller_class(anonymous_readonly: bool):
 def build_wsgi_app(config: AppConfig, mount: str = ""):
     """构建 WebDAV 的 WSGI 应用（认证走 SQLite）。
 
-    mount: 已由上层剥离的前缀（此处仅用于日志/兼容），
-    wsgidav 内部始终按根 "/" 处理。
+    mount: 挂载前缀（如 "/dav"）。wsgidav 内部始终按根 "/" 处理路径，
+    但目录页会用它拼接静态资源链接（/:dir_browser/... -> /dav/:dir_browser/...），
+    否则挂在子路径下时样式/脚本会 404。
     """
     auth = Authenticator(config)
+    mount = "/" + (mount or "").strip("/")
+    if mount == "/":
+        mount = ""
 
     dav_config = {
         "provider_mapping": {"/": config.root},
+        # 目录页静态资源链接前缀，并让 wsgidav 知道
+        # 自己挂在子路径下（MOVE/COPY 会据此剥 Destination 前缀）：
+        # /:dir_browser/... -> /dav/:dir_browser/...
+        "mount_path": mount,
         "http_authenticator": {
             "domain_controller": _make_domain_controller_class(config.anonymous_readonly),
             "accept_basic": config.auth_enabled,
@@ -302,6 +300,15 @@ def build_wsgi_app(config: AppConfig, mount: str = ""):
     }
 
     app = WsgiDAVApp(dav_config)
+
+    # 把挂载前缀告诉每个 provider：wsgidav 的 MOVE/COPY 依赖它
+    # 删掉 Destination 里的前缀，否则报 "Inter-realm copy/move"。
+    if mount:
+        for provider in getattr(app, "provider_map", {}).values():
+            try:
+                provider.mount_path = mount
+            except Exception:  # noqa: BLE001
+                pass
 
     if config.auth_enabled:
         # 开启认证时统一走写权限闸（无凭据 -> 401 挑战）
