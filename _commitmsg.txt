@@ -1,0 +1,11 @@
+修复 WebDAV admin 上传 403，权限改用 Linux 风格 r/w/rw
+
+- 根因：user_mapping["/"] = True 使 wsgidav 跳过认证，带 admin 凭据的请求
+  被当成匿名，写操作被判定为匿名只读而返回 403
+- 改为 realm 指向真实用户表 + 自定义 DomainController 控制匿名只读策略
+- 目录页现在正确显示登录用户（admin 不再显示为 anonymous）
+- 权限模型统一为 Linux 风格：r（只读）/ rw（可读写），三协议共用
+- 日志默认写程序根目录 app.log，已存在则重命名为 app-[日期时间].log
+- 默认账号改为 admin/admin，默认根目录 ./root
+- --init-config 时自动创建根目录；相对 root 以配置文件所在目录为基准
+- 移除 __main__ 中对已不存在的 dav_server.serve 的多余线程

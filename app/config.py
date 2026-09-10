@@ -18,7 +18,7 @@ from typing import Any
 DEFAULT_CONFIG_NAME = "config.json"
 
 CONFIG_TEMPLATE = {
-    "root": ".",
+    "root": "./root",
     "allow_access_base_dir_up_level": False,
     "http": {
         "enabled": True,
@@ -44,8 +44,8 @@ CONFIG_TEMPLATE = {
         "anonymous_readonly": True,
         "users": {
             "admin": {
-                "password": "change-me",
-                "permissions": "readwrite",
+                "password": "admin",
+                "permissions": "rw",
             }
         },
     },
@@ -63,6 +63,15 @@ def get_base_dir() -> str:
     # app/config.py -> 项目根
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.normpath(os.path.join(here, os.pardir))
+
+
+def ensure_root_dir(root: str) -> str | None:
+    """确保服务根目录存在；已存在返回 None，新建则返回路径。"""
+    path = os.path.abspath(root)
+    if os.path.isdir(path):
+        return None
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -89,11 +98,27 @@ def verify_password(stored: str, plain: str) -> bool:
 class AuthUser:
     username: str
     password: str
-    permissions: str = "readwrite"
+    permissions: str = "rw"
+
+    @property
+    def perms(self) -> set[str]:
+        """Linux 风格权限集合，支持 r / w / rw / ro(readonly)。"""
+        value = (self.permissions or "").strip().lower()
+        if value in ("readonly", "ro", "read_only", "read-only", "read"):
+            return {"r"}
+        flags: set[str] = set()
+        for ch in value:
+            if ch in ("r", "w"):
+                flags.add(ch)
+        return flags
+
+    @property
+    def can_read(self) -> bool:
+        return "r" in self.perms
 
     @property
     def can_write(self) -> bool:
-        return self.permissions.lower() in ("readwrite", "rw", "write")
+        return "w" in self.perms
 
     def check(self, plain: str) -> bool:
         return verify_password(self.password, plain)
@@ -137,10 +162,17 @@ class AppConfig:
         return None
 
     @staticmethod
-    def from_dict(data: dict, config_path: str = "") -> "AppConfig":
+    def from_dict(data: dict, config_path: str = "", base_dir: str = "") -> "AppConfig":
         merged = _deep_merge(CONFIG_TEMPLATE, data or {})
 
-        root = os.path.abspath(merged["root"])
+        raw_root = str(merged["root"])
+        if os.path.isabs(raw_root):
+            root = os.path.abspath(raw_root)
+        else:
+            # 相对路径以配置文件所在目录为基准（无配置文件时用程序目录），
+            # 保证“配置与 root 目录一起放置”时行为一致。
+            anchor = os.path.dirname(os.path.abspath(config_path)) if config_path else (base_dir or os.getcwd())
+            root = os.path.normpath(os.path.join(anchor, raw_root))
         http = merged["http"]
         webdav = merged["webdav"]
         ftp = merged["ftp"]
@@ -151,7 +183,7 @@ class AppConfig:
             name: AuthUser(
                 username=name,
                 password=str(info.get("password", "")),
-                permissions=str(info.get("permissions", "readwrite")),
+                permissions=str(info.get("permissions", "rw")),
             )
             for name, info in (auth.get("users") or {}).items()
         }
@@ -216,7 +248,7 @@ def load_config(path: str | None = None) -> AppConfig:
             used_path = os.path.abspath(candidate)
             break
 
-    cfg = AppConfig.from_dict(data, used_path)
+    cfg = AppConfig.from_dict(data, used_path, base_dir=base_dir)
     cfg = _env_overrides(cfg)
 
     if not cfg.config_path:

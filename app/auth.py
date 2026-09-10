@@ -58,3 +58,11 @@ class Authenticator:
         if user is None:
             return False
         return user.can_write
+
+    def can_read(self, user: AuthUser | None) -> bool:
+        """匿名可读当且仅当未开启认证，或开启了匿名只读。"""
+        if not self.config.auth_enabled:
+            return True
+        if user is None:
+            return self.config.anonymous_readonly
+        return user.can_read

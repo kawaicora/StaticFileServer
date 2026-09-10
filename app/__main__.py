@@ -42,6 +42,13 @@ def main(argv: list[str] | None = None) -> int:
         target = args.config or candidate_path_pending(get_base_dir())
         path = write_default_config(target)
         print(f"已生成默认配置: {path}")
+        # 确保默认根目录存在
+        from .config import ensure_root_dir
+
+        cfg = load_config(path)
+        created = ensure_root_dir(cfg.root)
+        if created:
+            print(f"已创建根目录: {created}")
         return 0
 
     config = load_config(args.config)
@@ -65,13 +72,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.no_ftp:
             config.ftp.enabled = False
 
-    log = setup_logging(config.log_level, config.log_file)
+    log = setup_logging(config.log_level, config.log_file, base_dir=get_base_dir())
 
     import os
 
     if not os.path.isdir(config.root):
-        log.error("根目录不存在: %s", config.root)
-        return 2
+        from .config import ensure_root_dir
+
+        ensure_root_dir(config.root)
+        log.info("根目录不存在，已自动创建: %s", config.root)
 
     log.info("StaticFileServer %s 启动，配置文件=%s", __version__, config.config_path or "(默认)")
     log.info("服务根目录: %s", config.root)
@@ -105,11 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     if config.webdav.enabled:
         from . import webdav_server
 
+        # run(block=False) 已在内部启动服务线程
         dav_server = webdav_server.run(config, block=False)
         servers["webdav"] = dav_server
-        t = threading.Thread(target=dav_server.serve, name="webdav", daemon=True)
-        t.start()
-        threads.append(t)
         log.info("WebDAV 监听 %s:%s", config.webdav.host, config.webdav.port)
 
     try:

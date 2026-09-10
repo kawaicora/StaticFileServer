@@ -96,10 +96,8 @@ def create_app(config: AppConfig) -> Flask:
         return Response("需要写入权限", 401, {"WWW-Authenticate": f'Basic realm="{config.realm}"'})
 
     def _require_read() -> Response | None:
-        if not auth.config.auth_required:
-            return None
         user = auth.check_basic_header(request.headers.get("Authorization"))
-        if user is not None:
+        if auth.can_read(user):
             return None
         return Response("需要认证", 401, {"WWW-Authenticate": f'Basic realm="{config.realm}"'})
 

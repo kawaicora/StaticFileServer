@@ -54,12 +54,14 @@ python -m venv .venv
 
 关键项：
 
-- `root`：对外暴露的根目录，支持相对路径（相对配置文件所在目录）
+- `root`：对外暴露的根目录，支持相对路径（相对配置文件所在目录），默认 `./root`
 - `allow_access_base_dir_up_level`：是否允许通过 `../` 跳出根目录（默认 `false`，强烈建议保持关闭）
 - `auth.anonymous_readonly`：`true` 时匿名可读、写需认证；`false` 时读写都需要认证
 - `auth.users.<name>.password`：支持明文，或 `sha256:<hex>` 哈希
   - 生成哈希：`python -c "import hashlib;print('sha256:'+hashlib.sha256(b'你的密码').hexdigest())"`
-- `auth.users.<name>.permissions`：`readwrite`（可写）或 `read`（只读）
+- `auth.users.<name>.permissions`：Linux 风格，`r`（只读）或 `rw`（可读写）
+- `log.file`：留空时默认写到程序根目录 `app.log`
+  - 启动时若 `app.log` 已存在，会先重命名为 `app-[日期时间].log`，再新建 `app.log`
 
 也可用环境变量覆盖：`SFS_ROOT`、`SFS_HTTP_PORT`、`SFS_WEBDAV_PORT`、`SFS_FTP_PORT`、`SFS_LOG_LEVEL`。
 
@@ -97,6 +99,6 @@ HTML 全部放在 `app/templates/*.html`，使用 Jinja2 继承（`{% extends "b
 
 ## 安全提示
 
-- 公网部署务必修改默认口令（`admin / change-me`）。
+- 公网部署务必修改默认口令（默认 `admin / admin`）。
 - 默认匿名只读，如需完全私有请设置 `auth.anonymous_readonly=false`。
 - 保持 `allow_access_base_dir_up_level=false`，避免根目录被跳出。
