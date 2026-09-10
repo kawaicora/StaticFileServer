@@ -1,11 +1,12 @@
+import uuid
+
 from flask import Flask, send_from_directory, request, redirect
 import os, sys
-
+import random, string
 # ====================== 配置开关 ======================
 # True：允许 ../ 向上跳出BASE_DIR，访问BASE_DIR的上级目录
 # False：禁止向上跳出BASE_DIR，最多只能访问BASE_DIR内部
 ALLOW_ACCESS_BASE_DIR_UP_LEVEL = True
-# =====================================================
 
 # 当前文件所在目录
 if getattr(sys, 'frozen', False):
@@ -14,6 +15,8 @@ if getattr(sys, 'frozen', False):
 else:
     # Python源码运行
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 BASE_DIR = os.path.normpath(BASE_DIR)
 print(f"BASE_DIR = {BASE_DIR}")
 print(f"ALLOW_ACCESS_BASE_DIR_UP_LEVEL = {ALLOW_ACCESS_BASE_DIR_UP_LEVEL}")
@@ -47,6 +50,27 @@ def get_real_ip():
 
     # 直连
     return request.remote_addr
+# =====================================================
+def get_safe_upload_filename(base_dir: str, user_filename: str):
+    # 防御路径穿越：只取文件名部分，丢弃任何路径
+    pure_name = os.path.basename(user_filename)
+    if not pure_name:
+        pure_name = "unnamed"
+
+    target_path = os.path.join(base_dir, pure_name)
+    if not os.path.exists(target_path):
+        return pure_name
+
+    # 文件已存在，生成 _aaa ~ _zzz 后缀
+    name_no_ext, ext = os.path.splitext(pure_name)
+    for _ in range(200): # 最多尝试200次，避免死循环
+        suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
+        new_name = f"{name_no_ext}_{suffix}{ext}"
+        new_path = os.path.join(base_dir, new_name)
+        if not os.path.exists(new_path):
+            return new_name
+    # 兜底：全部占用时用uuid
+    return None
 
 @app.before_request
 def before_request():
@@ -75,9 +99,12 @@ def upload_file():
     if file.filename == '':
         return "文件名为空", 400
     if file:
-        save_path = os.path.join(BASE_DIR, file.filename)
+        safe_filename = get_safe_upload_filename(BASE_DIR, file.filename)
+        if not safe_filename:
+            return "文件名冲突过多，无法生成安全文件名", 500
+        save_path = os.path.join(BASE_DIR, safe_filename)
         file.save(save_path)
-        return f"上传成功，文件名：{file.filename}"
+        return f"上传成功，文件名：{safe_filename}"
 
 # 简单上传页面，访问 /view/upload 可以直接上传文件
 @app.route("/view/upload", methods=["GET"])
