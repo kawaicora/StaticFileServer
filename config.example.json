@@ -1,0 +1,16 @@
+{
+  "root": ".",
+  "allow_access_base_dir_up_level": false,
+  "http":  { "enabled": true, "host": "0.0.0.0", "port": 80,   "debug": false },
+  "webdav":{ "enabled": true, "host": "0.0.0.0", "port": 8081, "mount": "/dav" },
+  "ftp":   { "enabled": true, "host": "0.0.0.0", "port": 2121, "banner": "StaticFileServer FTP" },
+  "auth": {
+    "enabled": true,
+    "realm": "StaticFileServer",
+    "anonymous_readonly": true,
+    "users": {
+      "admin": { "password": "change-me", "permissions": "readwrite" }
+    }
+  },
+  "log": { "level": "INFO", "file": "" }
+}

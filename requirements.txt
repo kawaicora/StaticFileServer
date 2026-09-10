@@ -1,0 +1,5 @@
+Flask>=3.0
+cheroot>=10.0
+wsgidav>=4.3
+pyftpdlib>=2.0
+pyinstaller>=6.0

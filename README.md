@@ -1,0 +1,95 @@
+# StaticFileServer
+
+一个多协议的静态文件服务：**HTTP**（浏览 / 上传）、**WebDAV**、**FTP** 共用同一个根目录和同一套认证配置。
+
+## 特性
+
+- HTTP 目录浏览、文件下载、文件上传接口与上传页面
+- WebDAV（wsgidav + cheroot），可直接被 Windows 资源管理器 / macOS Finder / RaiDrive 挂载
+- FTP（pyftpdlib），支持匿名只读与账号读写
+- HTTP / WebDAV / FTP 使用 **同一份账号配置**，权限口径一致
+- 可选匿名只读：未认证请求只能读，写操作返回 403 / 401
+- 路径穿越防护、上传重名自动加 `_xxx` 后缀
+- 单文件即可打包为 exe（PyInstaller）
+
+## 快速开始
+
+```powershell
+# 1. 创建虚拟环境
+python -m venv .venv
+
+# 2. 安装依赖
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 3. 生成默认配置（可选，不生成则使用内置默认值）
+.\.venv\Scripts\python.exe main.py --init-config
+
+# 4. 启动全部服务
+.\.venv\Scripts\python.exe main.py
+```
+
+启动后：
+
+- HTTP  <http://127.0.0.1/>
+- WebDAV <http://127.0.0.1:8081/>
+- FTP   <ftp://127.0.0.1:2121/>
+
+> 默认配置里 HTTP 端口是 80，需要管理员权限；请按需在 `config.json` 调整。
+
+## 命令行参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `--config PATH` | 指定配置文件（默认程序目录下 `config.json`） |
+| `--root PATH` | 覆盖服务根目录 |
+| `--only http\|webdav\|ftp` | 只启动单个服务 |
+| `--no-http` / `--no-webdav` / `--no-ftp` | 关闭对应服务 |
+| `--log-level LEVEL` | 覆盖日志级别 |
+| `--init-config` | 生成默认配置文件后退出 |
+| `--version` | 打印版本 |
+
+## 配置说明
+
+配置文件为 JSON，字段含义见 `config.example.json`。
+
+关键项：
+
+- `root`：对外暴露的根目录，支持相对路径（相对配置文件所在目录）
+- `allow_access_base_dir_up_level`：是否允许通过 `../` 跳出根目录（默认 `false`，强烈建议保持关闭）
+- `auth.anonymous_readonly`：`true` 时匿名可读、写需认证；`false` 时读写都需要认证
+- `auth.users.<name>.password`：支持明文，或 `sha256:<hex>` 哈希
+  - 生成哈希：`python -c "import hashlib;print('sha256:'+hashlib.sha256(b'你的密码').hexdigest())"`
+- `auth.users.<name>.permissions`：`readwrite`（可写）或 `read`（只读）
+
+也可用环境变量覆盖：`SFS_ROOT`、`SFS_HTTP_PORT`、`SFS_WEBDAV_PORT`、`SFS_FTP_PORT`、`SFS_LOG_LEVEL`。
+
+## 打包
+
+```powershell
+.\bulid.ps1
+# 产物：dist\StaticFileServer.exe
+```
+
+打包后把 `config.json` 放在 exe 同目录即可。
+
+## 目录结构
+
+```
+main.py                      # 入口（源码运行 / 打包入口）
+src/staticfileserver/
+  __main__.py                # CLI 与多服务编排
+  config.py                  # 配置加载、路径安全解析
+  auth.py                    # 共用认证逻辑
+  http_server.py             # HTTP 服务
+  webdav_server.py           # WebDAV 服务
+  ftp_server.py              # FTP 服务
+  templates.py               # 页面模板
+  logging_setup.py           # 日志
+packaging/hooks/             # PyInstaller 钩子
+```
+
+## 安全提示
+
+- 公网部署务必修改默认口令（`admin / change-me`）。
+- 默认匿名只读，如需完全私有请设置 `auth.anonymous_readonly=false`。
+- 保持 `allow_access_base_dir_up_level=false`，避免根目录被跳出。

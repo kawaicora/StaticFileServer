@@ -2,3 +2,9 @@
 [Bb]uild
 [Dd]ist
 *.spec
+__pycache__/
+*.pyc
+config.json
+config.test.json
+_testdata/
+_probe*.py

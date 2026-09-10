@@ -1,5 +1,4 @@
-
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+锘縖Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $scriptDir = $PSScriptRoot
@@ -7,22 +6,32 @@ Set-Location $scriptDir
 
 $venvPython = Join-Path $scriptDir ".venv\Scripts\python.exe"
 
-Write-Host "===== 打包 StaticFileServer =====" -ForegroundColor Cyan
-Write-Host "工作目录: $scriptDir"
-Write-Host "Python: $venvPython"
+Write-Host "===== Pack StaticFileServer =====" -ForegroundColor Cyan
+Write-Host "WorkDir: $scriptDir"
+Write-Host "Python : $venvPython"
 Write-Host "--------------------------------`n"
 
+if (-not (Test-Path $venvPython)) {
+    Write-Host "Virtual env not found. Run: python -m venv .venv" -ForegroundColor Red
+    exit 1
+}
 
-if(Test-Path "build"){ Remove-Item build -Recurse -Force }
-if(Test-Path "dist"){ Remove-Item dist -Recurse -Force }
-if(Test-Path "*.spec"){ Remove-Item *.spec -Force }
+if (Test-Path "build") { Remove-Item build -Recurse -Force }
+if (Test-Path "dist")  { Remove-Item dist -Recurse -Force }
 
-& $venvPython -m PyInstaller -F main.py
+& $venvPython -m PyInstaller -F --name StaticFileServer --specpath build main.py `
+    --paths (Join-Path $scriptDir "src") `
+    --additional-hooks-dir (Join-Path $scriptDir "packaging\hooks") `
+    --collect-all wsgidav `
+    --collect-all cheroot `
+    --collect-all pyftpdlib
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "`n? 打包成功！" -ForegroundColor Green
-    Write-Host "输出文件在: $scriptDir\dist\main.exe"
+    Write-Host "`nBuild OK" -ForegroundColor Green
+    Write-Host "Output: $(Join-Path $scriptDir 'dist\StaticFileServer.exe')"
+    Write-Host "First run: StaticFileServer.exe --init-config" -ForegroundColor Yellow
 }
 else {
-    Write-Host "`n? 打包失败，退出码 $LASTEXITCODE" -ForegroundColor Red
+    Write-Host "`nBuild FAILED, exit code $LASTEXITCODE" -ForegroundColor Red
+    exit $LASTEXITCODE
 }
