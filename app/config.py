@@ -60,9 +60,9 @@ def get_base_dir() -> str:
     """返回程序基准目录：打包后为 exe 所在目录，源码运行为项目根目录。"""
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
-    # src/staticfileserver/config.py -> 项目根
+    # app/config.py -> 项目根
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.normpath(os.path.join(here, os.pardir, os.pardir))
+    return os.path.normpath(os.path.join(here, os.pardir))
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

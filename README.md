@@ -76,17 +76,24 @@ python -m venv .venv
 
 ```
 main.py                      # 入口（源码运行 / 打包入口）
-src/staticfileserver/
+app/
   __main__.py                # CLI 与多服务编排
   config.py                  # 配置加载、路径安全解析
   auth.py                    # 共用认证逻辑
-  http_server.py             # HTTP 服务
+  http_server.py             # HTTP 服务（Flask + Jinja2）
   webdav_server.py           # WebDAV 服务
   ftp_server.py              # FTP 服务
-  templates.py               # 页面模板
+  filters.py                 # Jinja2 过滤器（文件大小格式化等）
   logging_setup.py           # 日志
+  templates/                 # Jinja2 模板（Flask 约定）
+    base.html                # 基础布局
+    directory.html           # 目录浏览
+    upload.html              # 上传页
+    error.html               # 错误页
 packaging/hooks/             # PyInstaller 钩子
 ```
+
+HTML 全部放在 `app/templates/*.html`，使用 Jinja2 继承（`{% extends "base.html" %}`），不在 Python 中内嵌页面。
 
 ## 安全提示
 

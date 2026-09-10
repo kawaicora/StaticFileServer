@@ -20,7 +20,8 @@ if (Test-Path "build") { Remove-Item build -Recurse -Force }
 if (Test-Path "dist")  { Remove-Item dist -Recurse -Force }
 
 & $venvPython -m PyInstaller -F --name StaticFileServer --specpath build main.py `
-    --paths (Join-Path $scriptDir "src") `
+    --paths $scriptDir `
+    --add-data "$scriptDir\app\templates;app\templates" `
     --additional-hooks-dir (Join-Path $scriptDir "packaging\hooks") `
     --collect-all wsgidav `
     --collect-all cheroot `

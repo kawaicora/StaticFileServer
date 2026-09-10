@@ -8,19 +8,18 @@ import os
 import sys
 
 
-def _bootstrap_src_path() -> None:
-    """源码运行时把 src/ 加入 sys.path；打包后模块已内联，无需处理。"""
+def _bootstrap_import_path() -> None:
+    """源码运行时把项目根加入 sys.path，使 app 可作为包导入；打包后已内联。"""
     if getattr(sys, "frozen", False):
         return
-    here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, "src")
-    if os.path.isdir(src) and src not in sys.path:
-        sys.path.insert(0, src)
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
 
 
-_bootstrap_src_path()
+_bootstrap_import_path()
 
-from staticfileserver.__main__ import main  # noqa: E402
+from app.__main__ import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())

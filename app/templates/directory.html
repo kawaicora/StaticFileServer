@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}目录: /{{ subpath }}{% endblock %}
+{% block body %}
+<h2>目录浏览 /{{ subpath }}</h2>
+<ul>
+  <li><a href="{{ parent_link }}">.. 返回上级</a></li>
+  {% for entry in entries %}
+    {% if entry.is_dir %}
+    <li>[文件夹] <a href="{{ entry.href }}">{{ entry.name }}/</a></li>
+    {% else %}
+    <li>[文件] <a href="{{ entry.href }}">{{ entry.name }}</a><span class="meta">{{ entry.size | filesize }}</span></li>
+    {% endif %}
+  {% endfor %}
+</ul>
+{% endblock %}

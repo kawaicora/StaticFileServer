@@ -1,21 +1,23 @@
-"""HTTP 静态文件服务（Flask）。
+"""HTTP 静态文件服务（Flask + Jinja2 模板）。
 
 功能：目录浏览、文件下载、上传接口、上传页面。
 认证：可选的 HTTP Basic；未认证时按配置决定是否只读。
+模板：app/templates/*.html
 """
 
 from __future__ import annotations
 
 import os
+import posixpath
 import random
 import string
 
-from flask import Flask, Response, redirect, request, send_file
+from flask import Flask, Response, redirect, render_template, request, send_file
 
 from .auth import Authenticator
 from .config import AppConfig, resolve_safe_path
+from .filters import register_filters
 from .logging_setup import get_logger
-from .templates import render_directory, render_page, render_upload_page
 
 log = get_logger("staticfileserver.http")
 
@@ -44,8 +46,39 @@ def unique_upload_name(base_dir: str, user_filename: str) -> str | None:
     return None
 
 
+def _build_entries(subpath: str, full_path: str, url_base: str) -> list[dict]:
+    """扫描目录，构造模板需要的条目列表。"""
+    subpath = subpath.strip("/")
+    try:
+        names = sorted(
+            os.listdir(full_path),
+            key=lambda e: (not os.path.isdir(os.path.join(full_path, e)), e.lower()),
+        )
+    except OSError:
+        names = []
+
+    entries = []
+    for name in names:
+        entry_full = os.path.join(full_path, name)
+        is_dir = os.path.isdir(entry_full)
+        entry_rel = f"{subpath}/{name}" if subpath else name
+        href = posixpath.join(url_base.rstrip("/") or "/", entry_rel)
+        if is_dir and not href.endswith("/"):
+            href += "/"
+        size = ""
+        if not is_dir:
+            try:
+                size = os.path.getsize(entry_full)
+            except OSError:
+                size = 0
+        entries.append({"name": name, "is_dir": is_dir, "href": href, "size": size})
+    return entries
+
+
 def create_app(config: AppConfig) -> Flask:
+    # static_folder=None：本项目把静态文件服务与 Flask 自身静态资源分开
     app = Flask(__name__, static_folder=None)
+    register_filters(app)
     auth = Authenticator(config)
     app.config["SFS_CONFIG"] = config
 
@@ -93,7 +126,7 @@ def create_app(config: AppConfig) -> Flask:
         denied = _require_read()
         if denied:
             return denied
-        return render_upload_page(url_base="/", upload_action="/api/upload")
+        return render_template("upload.html", url_base="/", upload_action="/api/upload")
 
     @app.route("/", defaults={"subpath": ""})
     @app.route("/<path:subpath>")
@@ -104,7 +137,7 @@ def create_app(config: AppConfig) -> Flask:
 
         full_path = resolve_safe_path(config.root, subpath, config.allow_access_base_dir_up_level)
         if full_path is None:
-            return "禁止访问：路径越界", 403
+            return render_template("error.html", code=403, message="禁止访问：路径越界", url_base="/"), 403
 
         if os.path.isdir(full_path) and not request.path.endswith("/"):
             return redirect(request.path + "/", code=301)
@@ -114,9 +147,17 @@ def create_app(config: AppConfig) -> Flask:
             return send_file(full_path)
 
         if os.path.isdir(full_path):
-            return render_directory(subpath, full_path, url_base="/")
+            stripped = subpath.strip("/")
+            parent_sub = posixpath.dirname(stripped)
+            parent_link = f"/{parent_sub}/" if parent_sub else "/"
+            return render_template(
+                "directory.html",
+                subpath=stripped,
+                parent_link=parent_link,
+                entries=_build_entries(subpath, full_path, "/"),
+            )
 
-        return render_page("404", "<h2>404 Not Found</h2>"), 404
+        return render_template("error.html", code=404, message="Not Found", url_base="/"), 404
 
     return app
 
@@ -124,4 +165,9 @@ def create_app(config: AppConfig) -> Flask:
 def run(config: AppConfig) -> None:
     app = create_app(config)
     log.info("HTTP 服务启动: http://%s:%s  根目录=%s", config.http.host, config.http.port, config.root)
-    app.run(host=config.http.host, port=config.http.port, debug=config.http.extra.get("debug", False), threaded=True)
+    app.run(
+        host=config.http.host,
+        port=config.http.port,
+        debug=config.http.extra.get("debug", False),
+        threaded=True,
+    )
