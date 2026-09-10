@@ -35,7 +35,7 @@ CONFIG_TEMPLATE = {
     "ftp": {
         "enabled": True,
         "host": "0.0.0.0",
-        "port": 2121,
+        "port": 21,
         "banner": "StaticFileServer FTP",
     },
     "auth": {
