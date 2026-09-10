@@ -62,13 +62,18 @@ class WriteGuardMiddleware:
 
     def __call__(self, environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
-        user = self.auth.check_basic_header(environ.get("HTTP_AUTHORIZATION"))
+        header = environ.get("HTTP_AUTHORIZATION")
+        user = self.auth.check_basic_header(header)
+
+        # 关键：开启认证但没有凭据时，必须回 401 + WWW-Authenticate 挑战。
+        # 否则客户端（WinSCP / 资源管理器 / 映射驱动器）看到 200 就以为不需要登录，
+        # 后续写请求不会带上账号密码，从而永远 403。
+        if self.auth.config.auth_enabled and not header:
+            return self._deny_401(environ, start_response)
 
         if method not in _SAFE_METHODS:
             if user is None:
-                if not self.anonymous_readonly:
-                    return self._deny_401(environ, start_response)
-                return self._deny_403(environ, start_response)
+                return self._deny_401(environ, start_response)
             if not user.can_write:
                 return self._deny_403(environ, start_response)
 
