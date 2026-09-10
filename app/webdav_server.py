@@ -143,7 +143,8 @@ def build_wsgi_app(config: AppConfig):
 
     users = {name: {"password": u.password} for name, u in config.users.items()}
 
-    # 挂载前缀（默认 /dav）。请求进来后 MountMiddleware 会把前缀剥掉，
+    # 挂载前缀（默认 "/"，即直接挂在根路径）。
+    # 若配了前缀，MountMiddleware 会先把前缀剥掉，
     # 所以 wsgidav 内部看到的始终是 "/"，provider/realm 都用 "/"。
     mount = "/" + str(config.webdav.extra.get("mount", "/") or "").strip("/")
     if mount == "/":

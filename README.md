@@ -59,6 +59,9 @@ python -m venv .venv
 - `auth.users.<name>.password`：支持明文，或 `sha256:<hex>` 哈希
   - 生成哈希：`python -c "import hashlib;print('sha256:'+hashlib.sha256(b'你的密码').hexdigest())"`
 - `auth.users.<name>.permissions`：Linux 风格，`r`（只读）或 `rw`（可读写）
+- `webdav.mount`：WebDAV 挂载路径前缀，默认 `/`（直接挂在根，客户端直接填 `http://IP:8081/`）
+  - 如需挂在子路径，改成如 `/dav`，则客户端地址为 `http://IP:8081/dav/`
+  - 挂载路径以外的请求会返回 404
 - `log.file`：留空时默认写到程序根目录 `app.log`
   - 启动时若 `app.log` 已存在，会先重命名为 `app-[日期时间].log`，再新建 `app.log`
 

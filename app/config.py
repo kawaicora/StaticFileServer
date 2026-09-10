@@ -30,7 +30,7 @@ CONFIG_TEMPLATE = {
         "enabled": True,
         "host": "0.0.0.0",
         "port": 8081,
-        "mount": "/dav",
+        "mount": "/",
     },
     "ftp": {
         "enabled": True,
@@ -206,7 +206,7 @@ class AppConfig:
                 host=str(webdav["host"]),
                 port=int(webdav["port"]),
                 enabled=bool(webdav["enabled"]),
-                extra={"mount": str(webdav.get("mount", "/dav"))},
+                extra={"mount": str(webdav.get("mount", "/"))},
             ),
             ftp=ServerConfig(
                 host=str(ftp["host"]),

@@ -8,3 +8,5 @@ config.json
 config.test.json
 _testdata/
 _probe*.py
+_t/
+*.log
