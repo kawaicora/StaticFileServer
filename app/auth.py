@@ -1,7 +1,7 @@
 """服务间共享的认证逻辑。
 
-HTTP 用 Basic Auth，WebDAV 用 HTTP Basic，FTP 用 USER/PASS，
-三者都从同一份 AppConfig.users 校验，保证口径一致。
+HTTP 与 WebDAV 共用 HTTP Basic；两者都从同一份 SQLite 用户库校验，
+保证口径一致。口令在库中以 scrypt 散列存储，不落明文。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 
-from .config import AppConfig, AuthUser
+from .config import AppConfig
 
 
 def parse_basic_auth(header: str | None) -> tuple[str, str] | None:
@@ -30,7 +30,7 @@ def parse_basic_auth(header: str | None) -> tuple[str, str] | None:
 
 
 class Authenticator:
-    """把 AppConfig 包装成各服务可用的校验器。"""
+    """把 AppConfig 包装成各服务可用的校验器（后端为 SQLite）。"""
 
     def __init__(self, config: AppConfig):
         self.config = config
@@ -39,19 +39,23 @@ class Authenticator:
     def anonymous_allowed(self) -> bool:
         return self.config.auth_enabled and self.config.anonymous_readonly
 
-    def check(self, username: str | None, password: str | None) -> AuthUser | None:
-        if not self.config.auth_enabled:
-            # 认证整体关闭：视为只读匿名
-            return None
-        return self.config.authenticate(username, password)
+    # ---------- 校验 ----------
 
-    def check_basic_header(self, header: str | None) -> AuthUser | None:
+    def check(self, username: str | None, password: str | None):
+        """返回用户对象（含 can_read/can_write）或 None。"""
+        if not self.config.auth_enabled:
+            return None
+        from .models import authenticate
+
+        return authenticate(username, password)
+
+    def check_basic_header(self, header: str | None):
         creds = parse_basic_auth(header)
         if not creds:
             return None
         return self.check(*creds)
 
-    def can_write(self, user: AuthUser | None) -> bool:
+    def can_write(self, user) -> bool:
         """匿名(未认证)只能写当且仅当未开启认证。"""
         if not self.config.auth_enabled:
             return True
@@ -59,7 +63,7 @@ class Authenticator:
             return False
         return user.can_write
 
-    def can_read(self, user: AuthUser | None) -> bool:
+    def can_read(self, user) -> bool:
         """匿名可读当且仅当未开启认证，或开启了匿名只读。"""
         if not self.config.auth_enabled:
             return True

@@ -1,17 +1,17 @@
 """统一准入控制：IP 黑白名单 + 热重载。
 
-三个协议（HTTP / WebDAV / FTP）都通过 AccessController 判定来源 IP，
+HTTP 与 WebDAV 都通过 AccessController 判定来源 IP，
 保证规则只有一份、行为一致。
 
 热重载：管理界面保存后调用 reload()，重新读取 config.json，
-后续请求立即使用新规则（用户表与 IP 规则都即时生效）。
+后续请求立即使用新规则（IP 规则即时生效）。
 """
 
 from __future__ import annotations
 
 import threading
 
-from .config import AppConfig, AuthUser, load_config
+from .config import AppConfig, load_config
 from .iprules import IPMatcher, build_matcher, is_allowed
 from .logging_setup import get_logger
 
@@ -46,19 +46,15 @@ class AccessController:
     def reload(self, config: AppConfig | None = None) -> AppConfig:
         """重新载入配置（默认从磁盘读）。返回新配置。"""
         with self._lock:
-            new_config = config if config is not None else load_config(self._config.config_path or None)
+            new_config = (
+                config
+                if config is not None
+                else load_config(self._config.config_path or None)
+            )
             self._config = new_config
             self._load_matchers(new_config)
-        # 通知 FTP 等模块刷新各自的派生缓存
-        try:
-            from . import ftp_server
-
-            ftp_server.bump_authz_generation()
-        except Exception:  # noqa: BLE001
-            pass
         log.info(
-            "配置热重载完成：用户=%d 白名单=%d 黑名单=%d 启用=%s",
-            len(new_config.users),
+            "配置热重载完成：白名单 %d 条，黑名单 %d 条，启用=%s",
             len(new_config.access_whitelist),
             len(new_config.access_blacklist),
             new_config.access_enabled,
@@ -71,7 +67,7 @@ class AccessController:
         """返回 (是否放行, 原因)。未启用 IP 限制时一律放行。"""
         if not ip or ip == "-":
             # 无法识别来源时，若配了白名单则保守拒绝
-            if self.enabled and (self._white):
+            if self.enabled and self._white:
                 return False, "无法识别来源 IP"
             return True, "来源未知，默认放行"
         if not self.enabled:
@@ -81,16 +77,20 @@ class AccessController:
     def is_allowed(self, ip: str | None) -> bool:
         return self.check_ip(ip)[0]
 
-    # ---------- 用户管理 ----------
+    # ---------- 用户管理（后端为 SQLite）----------
 
-    def find_user(self, username: str) -> AuthUser | None:
-        return self.config.users.get(username)
+    def find_user(self, username: str):
+        from .models import get_user
 
-    def verify(self, username: str | None, password: str | None) -> AuthUser | None:
-        return self.config.authenticate(username, password)
+        return get_user(username)
+
+    def verify(self, username: str | None, password: str | None):
+        from .models import authenticate
+
+        return authenticate(username, password)
 
 
-# 进程内单例：三个服务模块共享同一个控制器
+# 进程内单例：HTTP 与 WebDAV 共享同一个控制器
 _controller: AccessController | None = None
 _controller_lock = threading.Lock()
 

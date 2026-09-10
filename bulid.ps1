@@ -25,7 +25,6 @@ if (Test-Path "dist")  { Remove-Item dist -Recurse -Force }
     --additional-hooks-dir (Join-Path $scriptDir "packaging\hooks") `
     --collect-all wsgidav `
     --collect-all cheroot `
-    --collect-all pyftpdlib
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nBuild OK" -ForegroundColor Green

@@ -20,7 +20,7 @@ DEFAULT_CONFIG_NAME = "config.json"
 CONFIG_TEMPLATE = {
     "root": "./root",
     "allow_access_base_dir_up_level": False,
-    "http": {
+    "server": {
         "enabled": True,
         "host": "0.0.0.0",
         "port": 80,
@@ -28,31 +28,26 @@ CONFIG_TEMPLATE = {
     },
     "webdav": {
         "enabled": True,
-        "host": "0.0.0.0",
-        "port": 8081,
-        "mount": "/",
+        "mount": "/dav",
     },
-    "ftp": {
-        "enabled": True,
-        "host": "0.0.0.0",
-        "port": 21,
-        "banner": "StaticFileServer FTP",
+    "database": {
+        "url": "sqlite:///./users.db",
     },
     "auth": {
         "enabled": True,
         "realm": "StaticFileServer",
         "anonymous_readonly": True,
-        "users": {
-            "admin": {
-                "password": "admin",
-                "permissions": "rw",
-            }
+        "initial_user": {
+            "username": "admin",
+            "password": "admin",
+            "permissions": "rw",
         },
     },
     "access": {
         "enabled": False,
         "whitelist": [],
         "blacklist": [],
+        "trust_proxy_headers": True,
     },
     "log": {
         "level": "INFO",
@@ -100,13 +95,17 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def hash_password(plain: str) -> str:
-    return "sha256:" + hashlib.sha256(plain.encode("utf-8")).hexdigest()
+    """兼容旧接口：新代码请用 users_db.hash_password（scrypt）。"""
+    from .users_db import hash_password as _hp
+
+    return _hp(plain)
 
 
 def verify_password(stored: str, plain: str) -> bool:
-    if stored.startswith("sha256:"):
-        return hashlib.sha256(plain.encode("utf-8")).hexdigest() == stored[7:]
-    return stored == plain
+    """兼容旧接口：支持 scrypt / sha256:<hex> / 明文。"""
+    from .users_db import verify_password as _vp
+
+    return _vp(stored, plain)
 
 
 @dataclass
@@ -151,19 +150,20 @@ class ServerConfig:
 class AppConfig:
     root: str
     allow_access_base_dir_up_level: bool
-    http: ServerConfig
-    webdav: ServerConfig
-    ftp: ServerConfig
+    server: ServerConfig
+    webdav_server: ServerConfig
+    database_url: str
     auth_enabled: bool
     realm: str
     anonymous_readonly: bool
-    users: dict[str, AuthUser]
     log_level: str
     log_file: str
     config_path: str
+    initial_user: dict = field(default_factory=dict)
     access_enabled: bool = False
     access_whitelist: list[str] = field(default_factory=list)
     access_blacklist: list[str] = field(default_factory=list)
+    trust_proxy_headers: bool = True
     raw: dict = field(default_factory=dict)
 
     @property
@@ -171,13 +171,11 @@ class AppConfig:
         """是否强制认证（关闭匿名只读时需要）。"""
         return self.auth_enabled and not self.anonymous_readonly
 
-    def authenticate(self, username: str | None, password: str | None) -> AuthUser | None:
-        if not username:
-            return None
-        user = self.users.get(username)
-        if user and password is not None and user.check(password):
-            return user
-        return None
+    @property
+    def webdav_mount(self) -> str:
+        """WebDAV 挂载前缀（保证以 / 开头，无尾斜杠；根挂载为 ""）。"""
+        mount = "/" + str(self.webdav_server.extra.get("mount", "/dav") or "").strip("/")
+        return "" if mount == "/" else mount
 
     @staticmethod
     def from_dict(data: dict, config_path: str = "", base_dir: str = "") -> "AppConfig":
@@ -191,48 +189,40 @@ class AppConfig:
             # 保证“配置与 root 目录一起放置”时行为一致。
             anchor = os.path.dirname(os.path.abspath(config_path)) if config_path else (base_dir or os.getcwd())
             root = os.path.normpath(os.path.join(anchor, raw_root))
-        http = merged["http"]
+        http = merged["server"]
         webdav = merged["webdav"]
-        ftp = merged["ftp"]
+        database = merged.get("database") or {}
         auth = merged["auth"]
         access = merged.get("access") or {}
         log = merged["log"]
 
-        users = {
-            name: AuthUser(
-                username=name,
-                password=str(info.get("password", "")),
-                permissions=str(info.get("permissions", "rw")),
-            )
-            for name, info in (auth.get("users") or {}).items()
-        }
-
         return AppConfig(
             root=root,
             allow_access_base_dir_up_level=bool(merged["allow_access_base_dir_up_level"]),
-            http=ServerConfig(host=str(http["host"]), port=int(http["port"]), enabled=bool(http["enabled"])),
-            webdav=ServerConfig(
-                host=str(webdav["host"]),
-                port=int(webdav["port"]),
-                enabled=bool(webdav["enabled"]),
-                extra={"mount": str(webdav.get("mount", "/"))},
+            server=ServerConfig(
+                host=str(http["host"]),
+                port=int(http["port"]),
+                enabled=bool(http["enabled"]),
+                extra={"debug": bool(http.get("debug", False))},
             ),
-            ftp=ServerConfig(
-                host=str(ftp["host"]),
-                port=int(ftp["port"]),
-                enabled=bool(ftp["enabled"]),
-                extra={"banner": str(ftp.get("banner", "StaticFileServer FTP"))},
+            webdav_server=ServerConfig(
+                host=str(http["host"]),
+                port=int(http["port"]),
+                enabled=bool(webdav.get("enabled", True)),
+                extra={"mount": str(webdav.get("mount", "/dav"))},
             ),
+            database_url=str(database.get("url", "sqlite:///./users.db")),
             auth_enabled=bool(auth["enabled"]),
             realm=str(auth["realm"]),
             anonymous_readonly=bool(auth["anonymous_readonly"]),
-            users=users,
+            initial_user=dict(auth.get("initial_user") or {}),
             log_level=str(log["level"]).upper(),
             log_file=str(log.get("file", "") or ""),
             config_path=config_path,
             access_enabled=bool(access.get("enabled", False)),
             access_whitelist=[str(x) for x in (access.get("whitelist") or [])],
             access_blacklist=[str(x) for x in (access.get("blacklist") or [])],
+            trust_proxy_headers=bool(access.get("trust_proxy_headers", True)),
             raw=merged,
         )
 
@@ -242,12 +232,10 @@ def _env_overrides(cfg: AppConfig) -> AppConfig:
     env = os.environ
     if env.get("SFS_ROOT"):
         cfg.root = os.path.abspath(env["SFS_ROOT"])
-    if env.get("SFS_HTTP_PORT"):
-        cfg.http.port = int(env["SFS_HTTP_PORT"])
-    if env.get("SFS_WEBDAV_PORT"):
-        cfg.webdav.port = int(env["SFS_WEBDAV_PORT"])
-    if env.get("SFS_FTP_PORT"):
-        cfg.ftp.port = int(env["SFS_FTP_PORT"])
+    if env.get("SFS_PORT"):
+        cfg.server.port = int(env["SFS_PORT"])
+    if env.get("SFS_DATABASE_URL"):
+        cfg.database_url = env["SFS_DATABASE_URL"]
     if env.get("SFS_LOG_LEVEL"):
         cfg.log_level = env["SFS_LOG_LEVEL"].upper()
     return cfg

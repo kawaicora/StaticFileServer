@@ -10,3 +10,8 @@ _testdata/
 _probe*.py
 _t/
 *.log
+_t*/
+users.db
+users.db-wal
+users.db-shm
+*.db

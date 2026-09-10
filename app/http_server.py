@@ -1,8 +1,10 @@
 """HTTP 静态文件服务（Flask + Jinja2 模板）。
 
-功能：目录浏览、文件下载、上传接口、上传页面。
-认证：可选的 HTTP Basic；未认证时按配置决定是否只读。
+功能：目录浏览、文件下载、上传接口、上传页面、管理界面。
+认证：SQLite 用户库 + HTTP Basic；未认证时按配置决定是否只读。
 模板：app/templates/*.html
+
+该 Flask 应用由 app/server.py 与 WebDAV 合并到同一端口（单进程）。
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from .auth import Authenticator
 from .config import AppConfig, resolve_safe_path
 from .filters import register_filters
 from .logging_setup import get_logger
+from .realip import get_real_ip as resolve_real_ip
 
 log = get_logger("staticfileserver.http")
 
@@ -33,11 +36,9 @@ _DENY_IP_HTML = (
 
 def get_real_ip() -> str:
     """获取客户端真实 IP，兼容 Cloudflare / FRP / Nginx / 直连。"""
-    for header in ("CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"):
-        value = request.headers.get(header)
-        if value:
-            return value.split(",")[0].strip()
-    return request.remote_addr or "-"
+    controller = get_controller()
+    trust = controller.config.trust_proxy_headers if controller is not None else True
+    return resolve_real_ip(request.environ, trust_headers=trust)
 
 
 def unique_upload_name(base_dir: str, user_filename: str) -> str | None:
@@ -84,7 +85,7 @@ def _build_entries(subpath: str, full_path: str, url_base: str) -> list[dict]:
     return entries
 
 
-def create_app(config: AppConfig) -> Flask:
+def create_flask_app(config: AppConfig) -> Flask:
     # static_folder=None：本项目把静态文件服务与 Flask 自身静态资源分开
     app = Flask(__name__, static_folder=None)
     register_filters(app)
@@ -115,18 +116,42 @@ def create_app(config: AppConfig) -> Flask:
         who = user.username if user else "anonymous"
         log.info("%s %s %s -> user=%s", request.method, ip, request.path, who)
 
+    def _auth_user():
+        """解析 Basic 头，并区分“未提供凭据”与“凭据错误”。
+
+        返回 (user, had_header, bad_credentials)。
+        bad_credentials 为真时必须回 401，绝不能降级成匿名，
+        否则错口令会被当成匿名访问而放行。
+        """
+        header = request.headers.get("Authorization")
+        if not header:
+            return None, False, False
+        user = auth.check_basic_header(header)
+        return user, True, user is None
+
     def _require_write() -> Response | None:
         """写操作鉴权；返回非 None 表示应直接返回该响应。"""
-        user = auth.check_basic_header(request.headers.get("Authorization"))
+        user, had_header, bad = _auth_user()
+        if bad:
+            return _challenge()
         if auth.can_write(user):
             return None
-        return Response("需要写入权限", 401, {"WWW-Authenticate": f'Basic realm="{config.realm}"'})
+        return _challenge()
 
     def _require_read() -> Response | None:
-        user = auth.check_basic_header(request.headers.get("Authorization"))
+        user, had_header, bad = _auth_user()
+        if bad:
+            return _challenge()
         if auth.can_read(user):
             return None
-        return Response("需要认证", 401, {"WWW-Authenticate": f'Basic realm="{config.realm}"'})
+        return _challenge()
+
+    def _challenge() -> Response:
+        return Response(
+            "需要认证",
+            401,
+            {"WWW-Authenticate": f'Basic realm="{config.realm}"'},
+        )
 
     @app.route("/api/upload", methods=["POST"])
     def upload_file():
@@ -191,14 +216,3 @@ def create_app(config: AppConfig) -> Flask:
     register_admin(app, controller)
 
     return app
-
-
-def run(config: AppConfig) -> None:
-    app = create_app(config)
-    log.info("HTTP 服务启动: http://%s:%s  根目录=%s", config.http.host, config.http.port, config.root)
-    app.run(
-        host=config.http.host,
-        port=config.http.port,
-        debug=config.http.extra.get("debug", False),
-        threaded=True,
-    )
