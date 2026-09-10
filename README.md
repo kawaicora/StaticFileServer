@@ -21,10 +21,7 @@ python -m venv .venv
 # 2. 安装依赖
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 3. 生成默认配置（可选，不生成则使用内置默认值）
-.\.venv\Scripts\python.exe main.py --init-config
-
-# 4. 启动全部服务
+# 3. 启动全部服务（首次运行会自动生成 config.json 与 ./root）
 .\.venv\Scripts\python.exe main.py
 ```
 
@@ -45,6 +42,8 @@ python -m venv .venv
 | `--only http\|webdav\|ftp` | 只启动单个服务 |
 | `--no-http` / `--no-webdav` / `--no-ftp` | 关闭对应服务 |
 | `--log-level LEVEL` | 覆盖日志级别 |
+
+> 首次启动时若程序目录下没有 `config.json`，会自动按默认模板生成，并创建默认根目录 `./root`，然后直接开始服务，无需额外初始化命令。
 | `--init-config` | 生成默认配置文件后退出 |
 | `--version` | 打印版本 |
 

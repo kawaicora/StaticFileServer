@@ -74,6 +74,16 @@ def ensure_root_dir(root: str) -> str | None:
     return path
 
 
+def ensure_config_file(path: str) -> str | None:
+    """确保配置文件存在；已存在返回 None，新建则返回路径。"""
+    if os.path.isfile(path):
+        return None
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return write_default_config(path)
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     result = dict(base)
     for key, value in override.items():

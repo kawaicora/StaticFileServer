@@ -3,18 +3,20 @@
 用法：
     python -m staticfileserver                 # 按配置启动全部启用服务
     python -m staticfileserver --only http     # 只启动 HTTP
-    python -m staticfileserver --init-config   # 生成默认 config.json
+
+首次运行时会自动在程序目录生成 config.json 与 ./root 后直接启动。
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
 
 from . import __version__
-from .config import candidate_path_pending, get_base_dir, load_config, write_default_config
+from .config import DEFAULT_CONFIG_NAME, ensure_config_file, ensure_root_dir, get_base_dir, load_config
 from .logging_setup import get_logger, setup_logging
 
 
@@ -30,7 +32,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-webdav", action="store_true", help="禁用 WebDAV")
     parser.add_argument("--no-ftp", action="store_true", help="禁用 FTP")
     parser.add_argument("--log-level", help="覆盖日志级别")
-    parser.add_argument("--init-config", action="store_true", help="生成默认配置文件后退出")
     parser.add_argument("--version", action="version", version=f"StaticFileServer {__version__}")
     return parser
 
@@ -38,24 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.init_config:
-        target = args.config or candidate_path_pending(get_base_dir())
-        path = write_default_config(target)
-        print(f"已生成默认配置: {path}")
-        # 确保默认根目录存在
-        from .config import ensure_root_dir
+    # 启动前确保程序目录下存在 config.json；不存在则用默认模板创建
+    config_path = args.config or os.path.join(get_base_dir(), DEFAULT_CONFIG_NAME)
+    created_config = ensure_config_file(config_path)
 
-        cfg = load_config(path)
-        created = ensure_root_dir(cfg.root)
-        if created:
-            print(f"已创建根目录: {created}")
-        return 0
-
-    config = load_config(args.config)
+    config = load_config(config_path)
 
     if args.root:
-        import os
-
         config.root = os.path.abspath(args.root)
     if args.log_level:
         config.log_level = args.log_level.upper()
@@ -74,11 +64,10 @@ def main(argv: list[str] | None = None) -> int:
 
     log = setup_logging(config.log_level, config.log_file, base_dir=get_base_dir())
 
-    import os
+    if created_config:
+        log.info("未找到配置，已生成默认配置: %s", created_config)
 
     if not os.path.isdir(config.root):
-        from .config import ensure_root_dir
-
         ensure_root_dir(config.root)
         log.info("根目录不存在，已自动创建: %s", config.root)
 

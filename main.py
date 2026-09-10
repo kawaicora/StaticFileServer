@@ -1,7 +1,6 @@
 """入口脚本：源码运行与 PyInstaller 打包的统一入口。
 
     python main.py
-    python main.py --init-config
 """
 
 import os

@@ -30,7 +30,7 @@ if (Test-Path "dist")  { Remove-Item dist -Recurse -Force }
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nBuild OK" -ForegroundColor Green
     Write-Host "Output: $(Join-Path $scriptDir 'dist\StaticFileServer.exe')"
-    Write-Host "First run: StaticFileServer.exe --init-config" -ForegroundColor Yellow
+    Write-Host "First run: StaticFileServer.exe  (首次运行自动生成 config.json 与 .\root)" -ForegroundColor Yellow
 }
 else {
     Write-Host "`nBuild FAILED, exit code $LASTEXITCODE" -ForegroundColor Red
