@@ -14,12 +14,21 @@ import string
 
 from flask import Flask, Response, redirect, render_template, request, send_file
 
+from .access import AccessController, get_controller
 from .auth import Authenticator
 from .config import AppConfig, resolve_safe_path
 from .filters import register_filters
 from .logging_setup import get_logger
 
 log = get_logger("staticfileserver.http")
+
+
+_DENY_IP_HTML = (
+    "<!doctype html><html lang=zh-CN><head><meta charset=utf-8>"
+    "<title>403 Forbidden</title></head><body>"
+    "<h2>403 Forbidden</h2><p>您的 IP 不在允许访问的范围内。</p>"
+    "</body></html>"
+)
 
 
 def get_real_ip() -> str:
@@ -82,11 +91,29 @@ def create_app(config: AppConfig) -> Flask:
     auth = Authenticator(config)
     app.config["SFS_CONFIG"] = config
 
+    # 优先使用全局准入控制器（三协议共享、支持热重载）；否则自建一个
+    controller = get_controller() or AccessController(config)
+
     @app.before_request
-    def _log_request():
+    def _gate_and_log():
+        ip = get_real_ip()
+
+        # 管理界面与 API 不参与 IP 限制：否则规则一配错就把自己锁死，
+        # 再也无法登进管理页修正（它们另有管理员账号鉴权）。
+        if request.path.startswith("/view/admin") or request.path.startswith("/api/admin"):
+            user = auth.check_basic_header(request.headers.get("Authorization"))
+            who = user.username if user else "anonymous"
+            log.info("ADMIN %s %s %s -> user=%s", request.method, ip, request.path, who)
+            return None
+
+        allowed, reason = controller.check_ip(ip)
+        if not allowed:
+            log.warning("拒绝访问 %s %s -> %s", ip, request.path, reason)
+            return Response(_DENY_IP_HTML, 403, {"Content-Type": "text/html; charset=utf-8"})
+
         user = auth.check_basic_header(request.headers.get("Authorization"))
         who = user.username if user else "anonymous"
-        log.info("%s %s %s -> user=%s", request.method, get_real_ip(), request.path, who)
+        log.info("%s %s %s -> user=%s", request.method, ip, request.path, who)
 
     def _require_write() -> Response | None:
         """写操作鉴权；返回非 None 表示应直接返回该响应。"""
@@ -156,6 +183,12 @@ def create_app(config: AppConfig) -> Flask:
             )
 
         return render_template("error.html", code=404, message="Not Found", url_base="/"), 404
+
+    # ---------- 管理界面 ----------
+
+    from .admin import register_admin
+
+    register_admin(app, controller)
 
     return app
 

@@ -12,5 +12,10 @@
       "admin": { "password": "admin", "permissions": "rw" }
     }
   },
+  "access": {
+    "enabled": false,
+    "whitelist": [],
+    "blacklist": []
+  },
   "log": { "level": "INFO", "file": "" }
 }

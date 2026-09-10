@@ -13,6 +13,7 @@ from cheroot import wsgi
 from wsgidav.dc.simple_dc import SimpleDomainController
 from wsgidav.wsgidav_app import WsgiDAVApp
 
+from .access import get_controller
 from .auth import Authenticator
 from .config import AppConfig
 from .logging_setup import get_logger
@@ -108,6 +109,34 @@ class WriteGuardMiddleware:
         return [_body]
 
 
+class IPGateMiddleware:
+    """最先执行的 IP 准入闸：命中黑名单或不在白名单时直接 403。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        controller = get_controller()
+        if controller is None or not controller.enabled:
+            return self.app(environ, start_response)
+        ip = (
+            environ.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+            or environ.get("HTTP_X_REAL_IP")
+            or environ.get("REMOTE_ADDR")
+            or ""
+        )
+        allowed, reason = controller.check_ip(ip)
+        if not allowed:
+            log.warning("WebDAV 拒绝 %s -> %s", ip, reason)
+            body = b"403 Forbidden: IP not allowed"
+            start_response(
+                "403 Forbidden",
+                [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+            )
+            return [body]
+        return self.app(environ, start_response)
+
+
 class MountMiddleware:
     """把 WebDAV 挂载在指定路径前缀下（对应配置里的 webdav.mount）。
 
@@ -188,8 +217,11 @@ def build_wsgi_app(config: AppConfig):
     # 先按挂载前缀剥路径，再做写权限拦截
     if mount:
         app = MountMiddleware(app, mount)
-    if config.anonymous_readonly:
-        return WriteGuardMiddleware(app, auth, config.anonymous_readonly, config.realm)
+    if config.auth_enabled:
+        # 开启认证时统一走写权限闸（无凭据 -> 401 挑战）
+        app = WriteGuardMiddleware(app, auth, config.anonymous_readonly, config.realm)
+    # IP 准入闸放最外层：未过闸的请求不进入任何认证/业务逻辑
+    app = IPGateMiddleware(app)
     return app
 
 

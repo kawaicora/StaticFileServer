@@ -49,6 +49,11 @@ CONFIG_TEMPLATE = {
             }
         },
     },
+    "access": {
+        "enabled": False,
+        "whitelist": [],
+        "blacklist": [],
+    },
     "log": {
         "level": "INFO",
         "file": "",
@@ -156,6 +161,9 @@ class AppConfig:
     log_level: str
     log_file: str
     config_path: str
+    access_enabled: bool = False
+    access_whitelist: list[str] = field(default_factory=list)
+    access_blacklist: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
     @property
@@ -187,6 +195,7 @@ class AppConfig:
         webdav = merged["webdav"]
         ftp = merged["ftp"]
         auth = merged["auth"]
+        access = merged.get("access") or {}
         log = merged["log"]
 
         users = {
@@ -221,6 +230,9 @@ class AppConfig:
             log_level=str(log["level"]).upper(),
             log_file=str(log.get("file", "") or ""),
             config_path=config_path,
+            access_enabled=bool(access.get("enabled", False)),
+            access_whitelist=[str(x) for x in (access.get("whitelist") or [])],
+            access_blacklist=[str(x) for x in (access.get("blacklist") or [])],
             raw=merged,
         )
 
@@ -274,6 +286,23 @@ def write_default_config(path: str) -> str:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(CONFIG_TEMPLATE, fh, ensure_ascii=False, indent=2)
     return os.path.abspath(path)
+
+
+def save_config(config_path: str, data: dict) -> str:
+    """把完整配置写回磁盘（UTF-8，无 BOM，2 空格缩进）。
+
+    先写临时文件再原子替换，避免写入中断导致配置损坏。
+    """
+    target = os.path.abspath(config_path)
+    parent = os.path.dirname(target)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = target + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, target)
+    return target
 
 
 def _load_json_file(path: str) -> dict:

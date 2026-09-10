@@ -44,7 +44,6 @@ python -m venv .venv
 | `--log-level LEVEL` | 覆盖日志级别 |
 
 > 首次启动时若程序目录下没有 `config.json`，会自动按默认模板生成，并创建默认根目录 `./root`，然后直接开始服务，无需额外初始化命令。
-| `--init-config` | 生成默认配置文件后退出 |
 | `--version` | 打印版本 |
 
 ## 配置说明
@@ -60,6 +59,16 @@ python -m venv .venv
 - `auth.users.<name>.password`：支持明文，或 `sha256:<hex>` 哈希
   - 生成哈希：`python -c "import hashlib;print('sha256:'+hashlib.sha256(b'你的密码').hexdigest())"`
 - `auth.users.<name>.permissions`：Linux 风格，`r`（只读）或 `rw`（可读写）
+- `access.enabled`：是否启用 IP 访问控制（默认 `false`）
+- `access.whitelist` / `access.blacklist`：IP 规则数组，支持以下写法混用：
+  - 单个 IP：`192.168.2.3`
+  - CIDR 网段：`192.168.2.0/24`
+  - 区间：`192.168.2.100-192.168.2.150`，缩写形式 `192.168.2.100-150`
+  - 通配符：`192.168.2.*`（等价于 `/24`）
+  - 全部：`*`
+  - IPv6：`::1`、`2001:db8::/32`
+  - **优先级：黑名单优先**；白名单非空时，只有命中白名单的 IP 才放行
+  - 规则同时作用于 **HTTP / WebDAV / FTP** 三个协议
 - `webdav.mount`：WebDAV 挂载路径前缀，默认 `/`（直接挂在根，客户端直接填 `http://IP:8081/`）
   - 如需挂在子路径，改成如 `/dav`，则客户端地址为 `http://IP:8081/dav/`
   - 挂载路径以外的请求会返回 404
@@ -85,6 +94,9 @@ app/
   __main__.py                # CLI 与多服务编排
   config.py                  # 配置加载、路径安全解析
   auth.py                    # 共用认证逻辑
+  access.py                  # 统一准入控制（IP 黑白名单 + 热重载）
+  iprules.py                 # IP 规则解析与匹配
+  admin.py                   # 管理界面路由与 API
   http_server.py             # HTTP 服务（Flask + Jinja2）
   webdav_server.py           # WebDAV 服务
   ftp_server.py              # FTP 服务
@@ -95,13 +107,35 @@ app/
     directory.html           # 目录浏览
     upload.html              # 上传页
     error.html               # 错误页
+    admin.html               # 管理控制台
 packaging/hooks/             # PyInstaller 钩子
 ```
 
 HTML 全部放在 `app/templates/*.html`，使用 Jinja2 继承（`{% extends "base.html" %}`），不在 Python 中内嵌页面。
+
+## 管理界面
+
+访问 `http://<IP>/view/admin`，使用拥有 **写权限（`rw`）** 的账号登录（默认 `admin / admin`）。
+
+包含两块：
+
+- **用户管理**：新增 / 修改 / 删除用户，设置权限（`r` / `rw`），密码可明文或勾选按 `sha256` 存储
+- **IP 访问控制**：启用开关、白名单、黑名单（每行一条规则）
+
+保存后**立即生效，无需重启**：
+
+- HTTP / WebDAV 规则即时生效（请求级判定）
+- FTP 用户表即时刷新（下次连接即可用新账号）
+
+> 管理页面与 API 路径（`/view/admin`、`/api/admin/*`）**不受 IP 黑白名单限制**，
+> 且需管理员账号鉴权——避免把规则配错后把自己锁在门外无法修正。
+> 修改配置会写回 `config.json`（保持其余字段不变），下次启动继续生效。
 
 ## 安全提示
 
 - 公网部署务必修改默认口令（默认 `admin / admin`）。
 - 默认匿名只读，如需完全私有请设置 `auth.anonymous_readonly=false`。
 - 保持 `allow_access_base_dir_up_level=false`，避免根目录被跳出。
+- 需要限制来源时启用 `access.enabled`，用白名单锁定可信网段；黑名单优先级最高。
+- Windows 映射网络驱动器若失败，通常是客户端策略（`BasicAuthLevel=1` 且 `AuthForwardServerList` 为空）
+  不允许向纯 HTTP 发送 Basic 凭据，需改注册表并重启 `WebClient` 服务，与本服务端无关。

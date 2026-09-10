@@ -16,6 +16,7 @@ import sys
 import threading
 
 from . import __version__
+from .access import init_controller
 from .config import DEFAULT_CONFIG_NAME, ensure_config_file, ensure_root_dir, get_base_dir, load_config
 from .logging_setup import get_logger, setup_logging
 
@@ -73,6 +74,15 @@ def main(argv: list[str] | None = None) -> int:
 
     log.info("StaticFileServer %s 启动，配置文件=%s", __version__, config.config_path or "(默认)")
     log.info("服务根目录: %s", config.root)
+
+    # 初始化全局准入控制器（三协议共享，支持管理界面热重载）
+    init_controller(config)
+    log.info(
+        "IP 访问控制: %s（白名单 %d 条 / 黑名单 %d 条）",
+        "已启用" if config.access_enabled else "未启用",
+        len(config.access_whitelist),
+        len(config.access_blacklist),
+    )
 
     stop_event = threading.Event()
 

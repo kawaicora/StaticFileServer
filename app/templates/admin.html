@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}管理控制台{% endblock %}
+{% block body %}
+<h2>管理控制台</h2>
+<p class="meta">当前登录：{{ admin_user }} ｜ <a href="/">返回文件浏览</a> ｜ <a href="/view/upload">上传文件</a></p>
+
+<div class="tabs">
+  <button class="tab active" data-tab="users">用户管理</button>
+  <button class="tab" data-tab="access">IP 访问控制</button>
+</div>
+
+<!-- ============ 用户管理 ============ -->
+<section id="tab-users" class="panel">
+  <h3>用户列表</h3>
+  <table id="user-table">
+    <thead>
+      <tr><th>用户名</th><th>权限</th><th>口令</th><th>操作</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>新增 / 修改用户</h3>
+  <form id="user-form" class="grid">
+    <label>用户名<input type="text" id="u-name" required placeholder="例如 guest"></label>
+    <label>密码<input type="password" id="u-pass" placeholder="留空表示不修改"></label>
+    <label>权限
+      <select id="u-perms">
+        <option value="rw">rw（读写）</option>
+        <option value="r">r（只读）</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="u-hash"> 口令按 sha256 存储</label>
+    <div class="actions">
+      <button type="submit">保存用户</button>
+      <button type="button" id="u-reset" class="ghost">清空表单</button>
+    </div>
+  </form>
+</section>
+
+<!-- ============ IP 访问控制 ============ -->
+<section id="tab-access" class="panel hidden">
+  <h3>IP 访问控制</h3>
+  <p class="meta">
+    支持格式：单个 IP（<code>192.168.2.3</code>）、CIDR（<code>192.168.2.0/24</code>）、
+    区间（<code>192.168.2.100-192.168.2.150</code> 或缩写 <code>192.168.2.100-150</code>）、
+    通配符（<code>192.168.2.*</code>）。每行一条。
+  </p>
+
+  <label class="check"><input type="checkbox" id="a-enabled"> 启用 IP 访问控制</label>
+
+  <div class="cols">
+    <div>
+      <h4>白名单（非空时仅放行名单内 IP）</h4>
+      <textarea id="a-white" rows="8" spellcheck="false" placeholder="192.168.2.0/24&#10;10.0.0.5"></textarea>
+    </div>
+    <div>
+      <h4>黑名单（命中即拒绝，优先级最高）</h4>
+      <textarea id="a-black" rows="8" spellcheck="false" placeholder="192.168.2.100&#10;203.0.113.0/24"></textarea>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="a-save">保存访问规则</button>
+    <button id="a-reload" class="ghost" type="button">从磁盘重新载入</button>
+  </div>
+</section>
+
+<p id="toast" class="toast hidden"></p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const $ = (s) => document.querySelector(s);
+
+function toast(msg, ok = true) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "toast " + (ok ? "ok" : "err");
+  setTimeout(() => el.classList.add("hidden"), 3200);
+  el.classList.remove("hidden");
+}
+
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function renderUsers(users) {
+  const tb = $("#user-table tbody");
+  tb.innerHTML = "";
+  users.forEach((u) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${u.username}</td>` +
+      `<td><span class="badge ${u.permissions}">${u.permissions}</span></td>` +
+      `<td>${u.password_hashed ? "sha256" : "明文"}</td>` +
+      `<td><button class="link" data-edit="${u.username}">编辑</button> ` +
+      `<button class="link danger" data-del="${u.username}">删除</button></td>`;
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const u = users.find((x) => x.username === b.dataset.edit);
+      $("#u-name").value = u.username;
+      $("#u-name").readOnly = true;
+      $("#u-perms").value = u.permissions === "r" ? "r" : "rw";
+      $("#u-pass").value = "";
+      toast("编辑 " + u.username + "，留空密码表示不修改");
+    })
+  );
+  tb.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("确认删除用户 " + b.dataset.del + "？")) return;
+      try {
+        await api("DELETE", "/api/admin/users/" + encodeURIComponent(b.dataset.del));
+        toast("已删除 " + b.dataset.del);
+        loadState();
+      } catch (e) { toast(e.message, false); }
+    })
+  );
+}
+
+function resetForm() {
+  $("#u-name").value = "";
+  $("#u-name").readOnly = false;
+  $("#u-pass").value = "";
+  $("#u-perms").value = "rw";
+  $("#u-hash").checked = false;
+}
+
+async function loadState() {
+  const data = await api("GET", "/api/admin/state");
+  renderUsers(data.users);
+  $("#a-enabled").checked = data.access.enabled;
+  $("#a-white").value = data.access.whitelist.join("\n");
+  $("#a-black").value = data.access.blacklist.join("\n");
+}
+
+// tabs
+document.querySelectorAll(".tab").forEach((t) =>
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    $("#tab-users").classList.toggle("hidden", t.dataset.tab !== "users");
+    $("#tab-access").classList.toggle("hidden", t.dataset.tab !== "access");
+  })
+);
+
+$("#user-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("POST", "/api/admin/users", {
+      username: $("#u-name").value.trim(),
+      password: $("#u-pass").value,
+      permissions: $("#u-perms").value,
+      hash: $("#u-hash").checked,
+    });
+    toast("已保存用户 " + $("#u-name").value.trim());
+    resetForm();
+    loadState();
+  } catch (err) { toast(err.message, false); }
+});
+
+$("#u-reset").addEventListener("click", resetForm);
+
+$("#a-save").addEventListener("click", async () => {
+  const lines = (v) => v.split("\n").map((s) => s.trim()).filter(Boolean);
+  try {
+    await api("POST", "/api/admin/access", {
+      enabled: $("#a-enabled").checked,
+      whitelist: lines($("#a-white").value),
+      blacklist: lines($("#a-black").value),
+    });
+    toast("访问规则已保存并生效");
+    loadState();
+  } catch (err) { toast(err.message, false); }
+});
+
+$("#a-reload").addEventListener("click", async () => {
+  try { await api("POST", "/api/admin/reload"); toast("已重新载入"); loadState(); }
+  catch (err) { toast(err.message, false); }
+});
+
+loadState().catch((e) => toast(e.message, false));
+</script>
+{% endblock %}
