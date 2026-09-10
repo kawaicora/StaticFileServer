@@ -1,0 +1,5 @@
+.venv
+[Bb]uild
+[Dd]ist
+*.spec
+
