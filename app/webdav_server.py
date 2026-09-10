@@ -103,12 +103,53 @@ class WriteGuardMiddleware:
         return [_body]
 
 
+class MountMiddleware:
+    """把 WebDAV 挂载在指定路径前缀下（对应配置里的 webdav.mount）。
+
+    - 位于 mount 之下的请求：剥掉前缀后交给 wsgidav
+    - 恰好请求 mount 根（无尾斜杠）：重定向补斜杠
+    - 不在 mount 下的请求：404
+    """
+
+    def __init__(self, app, mount: str):
+        self.app = app
+        self.mount = "/" + (mount or "").strip("/")
+        if self.mount == "/":
+            self.mount = ""
+
+    def __call__(self, environ, start_response):
+        if not self.mount:
+            return self.app(environ, start_response)
+
+        path = environ.get("PATH_INFO", "/")
+        if path == self.mount:
+            location = path + "/"
+            if environ.get("QUERY_STRING"):
+                location += "?" + environ["QUERY_STRING"]
+            start_response("301 Moved Permanently", [("Location", location), ("Content-Length", "0")])
+            return [b""]
+
+        if path.startswith(self.mount + "/"):
+            environ["PATH_INFO"] = path[len(self.mount):]
+            return self.app(environ, start_response)
+
+        body = b"404 Not Found: WebDAV is mounted at " + self.mount.encode()
+        start_response("404 Not Found", [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))])
+        return [body]
+
+
 def build_wsgi_app(config: AppConfig):
     auth = Authenticator(config)
 
     users = {name: {"password": u.password} for name, u in config.users.items()}
 
-    # realm "/" 与 "*" 都指向真实用户表，保证 Basic 认证始终可用；
+    # 挂载前缀（默认 /dav）。请求进来后 MountMiddleware 会把前缀剥掉，
+    # 所以 wsgidav 内部看到的始终是 "/"，provider/realm 都用 "/"。
+    mount = "/" + str(config.webdav.extra.get("mount", "/") or "").strip("/")
+    if mount == "/":
+        mount = ""
+
+    # realm 指向真实用户表，保证 Basic 认证始终可用；
     # 匿名只读策略由自定义 DomainController + WriteGuardMiddleware 实现。
     user_mapping: dict = {
         "/": dict(users),
@@ -138,6 +179,9 @@ def build_wsgi_app(config: AppConfig):
 
     app = WsgiDAVApp(dav_config)
 
+    # 先按挂载前缀剥路径，再做写权限拦截
+    if mount:
+        app = MountMiddleware(app, mount)
     if config.anonymous_readonly:
         return WriteGuardMiddleware(app, auth, config.anonymous_readonly, config.realm)
     return app
