@@ -1,0 +1,21 @@
+networks:
+    1panel-network:
+        external: true
+
+services:
+  static-file-server:
+    build: .
+    container_name: static-file-server
+    volumes:
+      - ./static_file_server:/home/static_file_server  # 挂载本地目录到容器
+      - ${DATA_PATH}:/home/static_file_server/root
+    working_dir: /home/static_file_server
+    command: python main.py
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    ports:
+      - "${PORT}:80" # 将容器的80端口映射到主机的{PORT}端口
+    networks:
+      - 1panel-network
+    
